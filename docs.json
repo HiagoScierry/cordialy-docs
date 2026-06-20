@@ -53,6 +53,27 @@
               "guides/sellers",
               "guides/webhooks"
             ]
+          },
+          {
+            "group": "Exemplos",
+            "pages": [
+              "examples/http-client",
+              "examples/webhook-receiver",
+              "examples/crm-sync",
+              "examples/notifications",
+              "examples/followups-automation"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Webhooks",
+        "groups": [
+          {
+            "group": "Referência",
+            "pages": [
+              "webhooks/overview"
+            ]
           }
         ]
       },

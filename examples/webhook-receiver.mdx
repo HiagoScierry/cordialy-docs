@@ -1,0 +1,241 @@
+---
+title: Receptor de Webhooks
+description: Servidor completo para receber eventos da Cordialy com validação de assinatura
+---
+
+Exemplo de servidor pronto para produção que recebe, valida e roteia eventos.
+
+<CodeGroup>
+```typescript Node.js (Express)
+// webhook-server.ts
+import express from 'express';
+import crypto from 'crypto';
+
+const app = express();
+const SECRET = process.env.CORDIALY_WEBHOOK_SECRET!;
+
+// ⚠️ IMPORTANTE: usar raw body para validar a assinatura
+app.use('/webhook/cordialy', express.raw({ type: 'application/json' }));
+
+function validarAssinatura(payload: Buffer, signature: string): boolean {
+  const esperado = 'sha256=' + crypto
+    .createHmac('sha256', SECRET)
+    .update(payload)
+    .digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(esperado));
+  } catch {
+    return false;
+  }
+}
+
+app.post('/webhook/cordialy', async (req, res) => {
+  const signature = req.headers['x-cordialy-signature'] as string;
+
+  if (!signature || !validarAssinatura(req.body, signature)) {
+    return res.status(401).json({ error: 'Assinatura inválida' });
+  }
+
+  // Responde imediatamente — processa em background
+  res.status(200).json({ received: true });
+
+  const evento = JSON.parse(req.body.toString());
+  await processarEvento(evento);
+});
+
+async function processarEvento(evento: any) {
+  console.log(`[webhook] ${evento.event} — lead: ${evento.data?.lead_id}`);
+
+  switch (evento.event) {
+    case 'lead.created':
+      await onLeadCriado(evento.data);
+      break;
+    case 'lead.status_changed':
+      await onStatusAlterado(evento.data);
+      break;
+    case 'message.received':
+      await onMensagemRecebida(evento.data);
+      break;
+    case 'session.ended':
+      await onSessaoEncerrada(evento.data);
+      break;
+    default:
+      console.log(`[webhook] evento não tratado: ${evento.event}`);
+  }
+}
+
+async function onLeadCriado(data: any) {
+  // Sincroniza com seu CRM
+  await crm.createContact({
+    phone: data.customer_phone,
+    name: data.name,
+    externalId: data.lead_id,
+  });
+}
+
+async function onStatusAlterado(data: any) {
+  if (data.new_status === 'converted') {
+    await crm.markAsWon(data.lead_id);
+    await notificar(`Lead ${data.lead_id} convertido!`);
+  }
+}
+
+async function onMensagemRecebida(data: any) {
+  // Notifica o time de vendas
+  await slack.send(`#vendas`, `Nova mensagem do lead ${data.lead_id}: "${data.content}"`);
+}
+
+async function onSessaoEncerrada(data: any) {
+  await crm.updateDeal(data.lead_id, {
+    status: data.status,
+    duration: calcularDuracao(data.started_at, data.ended_at),
+  });
+}
+
+app.listen(3000, () => console.log('Webhook server rodando na porta 3000'));
+```
+
+```python Python (FastAPI)
+# webhook_server.py
+import hmac
+import hashlib
+import os
+import asyncio
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+
+app = FastAPI()
+SECRET = os.environ['CORDIALY_WEBHOOK_SECRET']
+
+def validar_assinatura(payload: bytes, signature: str) -> bool:
+    esperado = 'sha256=' + hmac.new(
+        SECRET.encode('utf-8'), payload, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, esperado)
+
+@app.post('/webhook/cordialy')
+async def receber_webhook(request: Request, background: BackgroundTasks):
+    payload = await request.body()
+    signature = request.headers.get('x-cordialy-signature', '')
+
+    if not validar_assinatura(payload, signature):
+        raise HTTPException(status_code=401, detail='Assinatura inválida')
+
+    # Responde imediatamente — processa em background
+    evento = await request.json()
+    background.add_task(processar_evento, evento)
+
+    return {'received': True}
+
+async def processar_evento(evento: dict):
+    print(f"[webhook] {evento['event']} — lead: {evento['data'].get('lead_id')}")
+
+    handlers = {
+        'lead.created': on_lead_criado,
+        'lead.status_changed': on_status_alterado,
+        'message.received': on_mensagem_recebida,
+        'session.ended': on_sessao_encerrada,
+    }
+
+    handler = handlers.get(evento['event'])
+    if handler:
+        await handler(evento['data'])
+
+async def on_lead_criado(data: dict):
+    await crm.create_contact(
+        phone=data['customer_phone'],
+        name=data.get('name'),
+        external_id=data['lead_id'],
+    )
+
+async def on_status_alterado(data: dict):
+    if data['new_status'] == 'converted':
+        await crm.mark_as_won(data['lead_id'])
+
+async def on_mensagem_recebida(data: dict):
+    await slack.send('#vendas', f"Nova mensagem: {data['content']}")
+
+async def on_sessao_encerrada(data: dict):
+    await crm.update_deal(data['lead_id'], status=data['status'])
+
+# uvicorn webhook_server:app --port 3000
+```
+
+```php PHP (Laravel)
+<?php
+// routes/api.php
+Route::post('/webhook/cordialy', [WebhookController::class, 'handle']);
+
+// app/Http/Controllers/WebhookController.php
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+
+class WebhookController extends Controller
+{
+    public function handle(Request $request)
+    {
+        $payload = $request->getContent();
+        $signature = $request->header('X-Cordialy-Signature', '');
+        $secret = config('services.cordialy.webhook_secret');
+
+        $esperado = 'sha256=' . hash_hmac('sha256', $payload, $secret);
+
+        if (!hash_equals($esperado, $signature)) {
+            return response()->json(['error' => 'Assinatura inválida'], 401);
+        }
+
+        $evento = $request->json()->all();
+
+        // Despacha para fila — não bloqueia a resposta
+        ProcessarWebhookCordialy::dispatch($evento);
+
+        return response()->json(['received' => true]);
+    }
+}
+
+// app/Jobs/ProcessarWebhookCordialy.php
+namespace App\Jobs;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+
+class ProcessarWebhookCordialy implements ShouldQueue
+{
+    use Queueable;
+
+    public function __construct(private array $evento) {}
+
+    public function handle(): void
+    {
+        match($this->evento['event']) {
+            'lead.created' => $this->onLeadCriado($this->evento['data']),
+            'lead.status_changed' => $this->onStatusAlterado($this->evento['data']),
+            'message.received' => $this->onMensagemRecebida($this->evento['data']),
+            'session.ended' => $this->onSessaoEncerrada($this->evento['data']),
+            default => null,
+        };
+    }
+
+    private function onLeadCriado(array $data): void
+    {
+        // Sincroniza com CRM
+        \App\Models\Contact::updateOrCreate(
+            ['cordialy_id' => $data['lead_id']],
+            ['phone' => $data['customer_phone'], 'name' => $data['name']]
+        );
+    }
+
+    private function onStatusAlterado(array $data): void
+    {
+        if ($data['new_status'] === 'converted') {
+            \App\Models\Deal::where('cordialy_id', $data['lead_id'])
+                ->update(['status' => 'won']);
+        }
+    }
+}
+```
+</CodeGroup>
+
+<Warning>
+  Use `express.raw()` no Node.js e `$request->getContent()` no PHP para obter o body bruto. Se usar `express.json()` antes, o body já foi parseado e a assinatura não bate.
+</Warning>

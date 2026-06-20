@@ -1,0 +1,219 @@
+---
+title: Cliente HTTP Reutilizável
+description: Classe wrapper para centralizar autenticação e tratamento de erros
+---
+
+Crie um cliente centralizado para não repetir headers e tratamento de erros em cada chamada.
+
+<CodeGroup>
+```typescript Node.js / TypeScript
+// cordialy.ts
+export class CordialyClient {
+  private baseUrl = 'https://api.cordialy.ai/integrations/v1';
+
+  constructor(private apiKey: string) {}
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown
+  ): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: {
+        'X-API-Key': this.apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`[${res.status}] ${err.message || 'Erro desconhecido'}`);
+    }
+
+    return res.json();
+  }
+
+  // Leads
+  leads = {
+    list: (params?: Record<string, string>) => {
+      const qs = params ? '?' + new URLSearchParams(params) : '';
+      return this.request('GET', `/leads${qs}`);
+    },
+    create: (data: { customer_phone: string; name?: string; status?: string }) =>
+      this.request('POST', '/leads', data),
+    get: (id: string) => this.request('GET', `/leads/${id}`),
+    update: (id: string, data: object) => this.request('PATCH', `/leads/${id}`, data),
+    sendMessage: (id: string, message: string) =>
+      this.request('POST', `/leads/${id}/messages`, { message }),
+    messages: (id: string) => this.request('GET', `/leads/${id}/messages`),
+  };
+
+  // Sellers
+  sellers = {
+    list: () => this.request('GET', '/sellers'),
+    create: (data: { name: string; whatsapp_id: string }) =>
+      this.request('POST', '/sellers', data),
+    update: (id: string, data: object) => this.request('PATCH', `/sellers/${id}`, data),
+    delete: (id: string) => this.request('DELETE', `/sellers/${id}`),
+  };
+
+  // Follow-ups
+  followups = {
+    configs: () => this.request('GET', '/followups/configs'),
+    schedule: (data: { lead_id: string; config_id: string; scheduled_at?: string }) =>
+      this.request('POST', '/followups/scheduled', data),
+    cancel: (id: string) => this.request('DELETE', `/followups/scheduled/${id}`),
+  };
+}
+
+// Uso:
+const cordialy = new CordialyClient(process.env.CORDIALY_API_KEY!);
+
+const lead = await cordialy.leads.create({ customer_phone: '5511999998888', name: 'João' });
+await cordialy.leads.sendMessage(lead.id, 'Olá João!');
+```
+
+```python Python
+# cordialy.py
+import os
+import requests
+from typing import Optional
+
+class CordialyClient:
+    BASE_URL = 'https://api.cordialy.ai/integrations/v1'
+
+    def __init__(self, api_key: str):
+        self.session = requests.Session()
+        self.session.headers.update({
+            'X-API-Key': api_key,
+            'Content-Type': 'application/json',
+        })
+
+    def _request(self, method: str, path: str, **kwargs):
+        res = self.session.request(method, f'{self.BASE_URL}{path}', **kwargs)
+        if not res.ok:
+            err = res.json() if res.content else {}
+            raise Exception(f"[{res.status_code}] {err.get('message', 'Erro desconhecido')}")
+        return res.json()
+
+    # Leads
+    def list_leads(self, **params):
+        return self._request('GET', '/leads', params=params)
+
+    def create_lead(self, customer_phone: str, name: str = None, status: str = None):
+        data = {'customer_phone': customer_phone}
+        if name: data['name'] = name
+        if status: data['status'] = status
+        return self._request('POST', '/leads', json=data)
+
+    def get_lead(self, lead_id: str):
+        return self._request('GET', f'/leads/{lead_id}')
+
+    def update_lead(self, lead_id: str, **data):
+        return self._request('PATCH', f'/leads/{lead_id}', json=data)
+
+    def send_message(self, lead_id: str, message: str):
+        return self._request('POST', f'/leads/{lead_id}/messages', json={'message': message})
+
+    def get_messages(self, lead_id: str):
+        return self._request('GET', f'/leads/{lead_id}/messages')
+
+    # Sellers
+    def list_sellers(self):
+        return self._request('GET', '/sellers')
+
+    def create_seller(self, name: str, whatsapp_id: str):
+        return self._request('POST', '/sellers', json={'name': name, 'whatsapp_id': whatsapp_id})
+
+    # Follow-ups
+    def list_followup_configs(self):
+        return self._request('GET', '/followups/configs')
+
+    def schedule_followup(self, lead_id: str, config_id: str, scheduled_at: str = None):
+        data = {'lead_id': lead_id, 'config_id': config_id}
+        if scheduled_at: data['scheduled_at'] = scheduled_at
+        return self._request('POST', '/followups/scheduled', json=data)
+
+    def cancel_followup(self, followup_id: str):
+        return self._request('DELETE', f'/followups/scheduled/{followup_id}')
+
+
+# Uso:
+cordialy = CordialyClient(os.environ['CORDIALY_API_KEY'])
+
+lead = cordialy.create_lead('5511999998888', name='João')
+cordialy.send_message(lead['id'], 'Olá João!')
+```
+
+```php PHP (Laravel)
+<?php
+// app/Services/CordialyClient.php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Http;
+use Illuminate\Http\Client\Response;
+
+class CordialyClient
+{
+    private string $baseUrl = 'https://api.cordialy.ai/integrations/v1';
+    private $http;
+
+    public function __construct()
+    {
+        $this->http = Http::baseUrl($this->baseUrl)
+            ->withHeaders(['X-API-Key' => config('services.cordialy.key')])
+            ->throw(); // lança exceção em erros
+    }
+
+    public function listLeads(array $params = []): array
+    {
+        return $this->http->get('/leads', $params)->json();
+    }
+
+    public function createLead(string $phone, string $name = null): array
+    {
+        return $this->http->post('/leads', array_filter([
+            'customer_phone' => $phone,
+            'name' => $name,
+        ]))->json();
+    }
+
+    public function updateLead(string $id, array $data): array
+    {
+        return $this->http->patch("/leads/{$id}", $data)->json();
+    }
+
+    public function sendMessage(string $leadId, string $message): array
+    {
+        return $this->http->post("/leads/{$leadId}/messages", [
+            'message' => $message,
+        ])->json();
+    }
+
+    public function scheduleFollowup(string $leadId, string $configId, string $scheduledAt = null): array
+    {
+        return $this->http->post('/followups/scheduled', array_filter([
+            'lead_id' => $leadId,
+            'config_id' => $configId,
+            'scheduled_at' => $scheduledAt,
+        ]))->json();
+    }
+
+    public function cancelFollowup(string $followupId): array
+    {
+        return $this->http->delete("/followups/scheduled/{$followupId}")->json();
+    }
+}
+
+// config/services.php:
+// 'cordialy' => ['key' => env('CORDIALY_API_KEY')]
+
+// Uso:
+$cordialy = new CordialyClient();
+$lead = $cordialy->createLead('5511999998888', 'João');
+$cordialy->sendMessage($lead['id'], 'Olá João!');
+```
+</CodeGroup>

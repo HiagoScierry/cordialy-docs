@@ -1,0 +1,169 @@
+---
+title: Automação de Follow-ups
+description: Gerenciar o ciclo de vida de follow-ups com base em eventos externos
+---
+
+Exemplos de como integrar follow-ups com seu fluxo de negócio.
+
+<CodeGroup>
+```typescript Node.js / TypeScript
+// followup-automation.ts
+import { CordialyClient } from './cordialy';
+
+const cordialy = new CordialyClient(process.env.CORDIALY_API_KEY!);
+
+// IDs das configs de follow-up (buscar via GET /followups/configs)
+const CONFIG = {
+  REATIVACAO: process.env.FOLLOWUP_CONFIG_REATIVACAO!,
+  POS_REUNIAO: process.env.FOLLOWUP_CONFIG_POS_REUNIAO!,
+  CARRINHO: process.env.FOLLOWUP_CONFIG_CARRINHO!,
+  COBRANCA: process.env.FOLLOWUP_CONFIG_COBRANCA!,
+};
+
+// ── Agendamento automático ──────────────────────────────────────────────────
+
+// Carrinho abandonado → follow-up em 2 horas
+export async function onCarrinhoAbandonado(leadId: string) {
+  const scheduledAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  await cordialy.followups.schedule({
+    lead_id: leadId,
+    config_id: CONFIG.CARRINHO,
+    scheduled_at: scheduledAt,
+  });
+}
+
+// Reunião finalizada → follow-up no dia seguinte às 10h
+export async function onReuniaoFinalizada(leadId: string) {
+  const amanha = new Date();
+  amanha.setDate(amanha.getDate() + 1);
+  amanha.setHours(10, 0, 0, 0);
+
+  await cordialy.followups.schedule({
+    lead_id: leadId,
+    config_id: CONFIG.POS_REUNIAO,
+    scheduled_at: amanha.toISOString(),
+  });
+}
+
+// Fatura em atraso → follow-up imediato
+export async function onFaturaAtrasada(leadId: string) {
+  await cordialy.followups.schedule({
+    lead_id: leadId,
+    config_id: CONFIG.COBRANCA,
+    // sem scheduled_at → usa trigger_delay_minutes da config
+  });
+}
+
+// ── Cancelamento automático ─────────────────────────────────────────────────
+
+// Cancela todos os follow-ups pendentes de um lead
+export async function cancelarFollowupsPendentes(leadId: string) {
+  const todos = await cordialy.followups.scheduled(leadId);
+  const pendentes = todos.filter((f: any) => f.status === 'pending');
+
+  await Promise.all(pendentes.map((f: any) => cordialy.followups.cancel(f.id)));
+
+  return pendentes.length;
+}
+
+// Lead converteu → cancela follow-ups e marca status
+export async function onLeadConverteu(leadId: string) {
+  const cancelados = await cancelarFollowupsPendentes(leadId);
+  await cordialy.leads.update(leadId, { status: 'converted' });
+  console.log(`Lead ${leadId} convertido. ${cancelados} follow-up(s) cancelado(s).`);
+}
+
+// Compra finalizada → cancela carrinho e reativa
+export async function onCompraConcluida(leadId: string) {
+  await cancelarFollowupsPendentes(leadId);
+  await onLeadConverteu(leadId);
+}
+
+// ── Cron: verificar follow-ups ──────────────────────────────────────────────
+
+// Rodar a cada hora para verificar se há follow-ups que precisam de atenção
+export async function verificarFollowupsPendentes() {
+  const pendentes = await cordialy.followups.scheduled();
+  const agora = new Date();
+
+  for (const followup of pendentes as any[]) {
+    const scheduledAt = new Date(followup.scheduled_at);
+    const minutosRestantes = Math.round((scheduledAt.getTime() - agora.getTime()) / 60000);
+
+    if (minutosRestantes <= 30 && minutosRestantes > 0) {
+      // Notifica internamente antes do disparo
+      await slack.send('#vendas',
+        `⏰ Follow-up em ${minutosRestantes} min para lead ${followup.lead_id}`
+      );
+    }
+  }
+}
+```
+
+```python Python
+# followup_automation.py
+import os
+from datetime import datetime, timedelta
+from cordialy import CordialyClient
+
+cordialy = CordialyClient(os.environ['CORDIALY_API_KEY'])
+
+CONFIG = {
+    'REATIVACAO': os.environ['FOLLOWUP_CONFIG_REATIVACAO'],
+    'POS_REUNIAO': os.environ['FOLLOWUP_CONFIG_POS_REUNIAO'],
+    'CARRINHO': os.environ['FOLLOWUP_CONFIG_CARRINHO'],
+    'COBRANCA': os.environ['FOLLOWUP_CONFIG_COBRANCA'],
+}
+
+# ── Agendamento automático ──────────────────────────────────────────────────
+
+def on_carrinho_abandonado(lead_id: str):
+    scheduled_at = (datetime.utcnow() + timedelta(hours=2)).isoformat() + 'Z'
+    cordialy.schedule_followup(lead_id, CONFIG['CARRINHO'], scheduled_at)
+
+def on_reuniao_finalizada(lead_id: str):
+    amanha = datetime.utcnow() + timedelta(days=1)
+    amanha = amanha.replace(hour=13, minute=0, second=0, microsecond=0)  # 10h BRT
+    cordialy.schedule_followup(lead_id, CONFIG['POS_REUNIAO'], amanha.isoformat() + 'Z')
+
+def on_fatura_atrasada(lead_id: str):
+    cordialy.schedule_followup(lead_id, CONFIG['COBRANCA'])
+
+# ── Cancelamento automático ─────────────────────────────────────────────────
+
+def cancelar_followups_pendentes(lead_id: str) -> int:
+    todos = cordialy.list_followups(lead_id=lead_id)
+    pendentes = [f for f in todos if f['status'] == 'pending']
+
+    for f in pendentes:
+        cordialy.cancel_followup(f['id'])
+
+    return len(pendentes)
+
+def on_lead_converteu(lead_id: str):
+    cancelados = cancelar_followups_pendentes(lead_id)
+    cordialy.update_lead(lead_id, status='converted')
+    print(f'Lead {lead_id} convertido. {cancelados} follow-up(s) cancelado(s).')
+
+def on_compra_concluida(lead_id: str):
+    cancelar_followups_pendentes(lead_id)
+    on_lead_converteu(lead_id)
+
+# ── Cron: verificar follow-ups ──────────────────────────────────────────────
+
+def verificar_followups_pendentes():
+    pendentes = cordialy.list_followups()
+    agora = datetime.utcnow()
+
+    for followup in pendentes:
+        scheduled_at = datetime.fromisoformat(
+            followup['scheduled_at'].replace('Z', '+00:00')
+        ).replace(tzinfo=None)
+        minutos_restantes = int((scheduled_at - agora).total_seconds() / 60)
+
+        if 0 < minutos_restantes <= 30:
+            slack.send('#vendas',
+                f"⏰ Follow-up em {minutos_restantes} min — lead {followup['lead_id']}"
+            )
+```
+</CodeGroup>

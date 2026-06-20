@@ -1,0 +1,219 @@
+---
+title: Sincronização com CRM
+description: Manter leads sincronizados entre seu CRM e a Cordialy nos dois sentidos
+---
+
+Padrão para sincronização bidirecional — quando um lead muda no CRM reflete na Cordialy, e vice-versa.
+
+<CodeGroup>
+```typescript Node.js / TypeScript
+// crm-sync.ts
+import { CordialyClient } from './cordialy';
+
+const cordialy = new CordialyClient(process.env.CORDIALY_API_KEY!);
+
+// ── CRM → Cordialy ─────────────────────────────────────────────────────────
+
+// Chamado quando um contato é criado/atualizado no CRM
+export async function syncParaCordialy(contato: CRMContact) {
+  try {
+    // Tenta criar — se já existir, retorna o existente
+    const lead = await cordialy.leads.create({
+      customer_phone: contato.phone,
+      name: contato.name,
+      status: mapearStatus(contato.stage),
+    });
+
+    // Salva o ID da Cordialy no CRM para referência futura
+    await crm.updateContact(contato.id, { cordialy_lead_id: lead.id });
+
+    // Atribui o vendedor responsável se houver
+    if (contato.owner_id) {
+      const seller = await buscarSellerPorEmail(contato.owner_email);
+      if (seller) {
+        await cordialy.leads.update(lead.id, { seller_id: seller.id });
+      }
+    }
+  } catch (err) {
+    console.error(`Erro ao sincronizar contato ${contato.id}:`, err);
+  }
+}
+
+// Chamado quando o status muda no CRM
+export async function syncStatusParaCordialy(contato: CRMContact) {
+  if (!contato.cordialy_lead_id) return;
+
+  await cordialy.leads.update(contato.cordialy_lead_id, {
+    status: mapearStatus(contato.stage),
+  });
+
+  // Cancela follow-ups pendentes se convertido ou perdido
+  if (['converted', 'lost'].includes(mapearStatus(contato.stage))) {
+    const followups = await cordialy.followups.scheduled(contato.cordialy_lead_id);
+    const pendentes = followups.filter((f: any) => f.status === 'pending');
+    await Promise.all(pendentes.map((f: any) => cordialy.followups.cancel(f.id)));
+  }
+}
+
+function mapearStatus(stage: string): string {
+  const mapa: Record<string, string> = {
+    'new': 'pending',
+    'contacted': 'in_progress',
+    'qualified': 'in_progress',
+    'won': 'converted',
+    'lost': 'lost',
+  };
+  return mapa[stage] ?? 'pending';
+}
+
+// ── Cordialy → CRM (via webhook) ───────────────────────────────────────────
+
+// Recebe eventos da Cordialy e atualiza o CRM
+export async function processarWebhookCordialy(evento: any) {
+  switch (evento.event) {
+    case 'lead.created': {
+      // Lead criou-se pelo WhatsApp — cria no CRM também
+      await crm.createContact({
+        phone: evento.data.customer_phone,
+        name: evento.data.name,
+        source: 'whatsapp',
+        cordialy_lead_id: evento.data.lead_id,
+      });
+      break;
+    }
+
+    case 'lead.status_changed': {
+      const contato = await crm.findByExternal(evento.data.lead_id);
+      if (contato) {
+        await crm.updateStage(contato.id, mapearStage(evento.data.new_status));
+      }
+      break;
+    }
+
+    case 'session.ended': {
+      const contato = await crm.findByExternal(evento.data.lead_id);
+      if (contato) {
+        await crm.addNote(contato.id, {
+          type: 'whatsapp_session',
+          content: `Sessão encerrada com ${evento.data.message_count} mensagens. Status: ${evento.data.status}`,
+          date: evento.data.ended_at,
+        });
+      }
+      break;
+    }
+  }
+}
+
+function mapearStage(status: string): string {
+  const mapa: Record<string, string> = {
+    'pending': 'new',
+    'in_progress': 'contacted',
+    'converted': 'won',
+    'lost': 'lost',
+  };
+  return mapa[status] ?? 'new';
+}
+
+// ── Sincronização inicial em lote ───────────────────────────────────────────
+
+import pLimit from 'p-limit';
+
+export async function syncInicial() {
+  const contatos = await crm.listAllContacts();
+  const limit = pLimit(10); // 10 simultâneas para respeitar rate limit
+
+  console.log(`Sincronizando ${contatos.length} contatos...`);
+
+  await Promise.all(
+    contatos.map(c => limit(() => syncParaCordialy(c)))
+  );
+
+  console.log('Sincronização concluída.');
+}
+```
+
+```python Python
+# crm_sync.py
+from cordialy import CordialyClient
+import asyncio
+
+cordialy = CordialyClient(os.environ['CORDIALY_API_KEY'])
+
+STATUS_MAP = {
+    'new': 'pending',
+    'contacted': 'in_progress',
+    'qualified': 'in_progress',
+    'won': 'converted',
+    'lost': 'lost',
+}
+
+STAGE_MAP = {v: k for k, v in STATUS_MAP.items()}
+
+# ── CRM → Cordialy ─────────────────────────────────────────────────────────
+
+def sync_para_cordialy(contato: dict):
+    try:
+        lead = cordialy.create_lead(
+            customer_phone=contato['phone'],
+            name=contato.get('name'),
+            status=STATUS_MAP.get(contato.get('stage', 'new'), 'pending'),
+        )
+        crm.update_contact(contato['id'], {'cordialy_lead_id': lead['id']})
+        return lead
+    except Exception as e:
+        print(f"Erro ao sincronizar {contato['id']}: {e}")
+
+def sync_status_para_cordialy(contato: dict):
+    lead_id = contato.get('cordialy_lead_id')
+    if not lead_id:
+        return
+
+    novo_status = STATUS_MAP.get(contato.get('stage', ''), 'pending')
+    cordialy.update_lead(lead_id, status=novo_status)
+
+    if novo_status in ('converted', 'lost'):
+        followups = cordialy.list_followups(lead_id=lead_id)
+        for f in followups:
+            if f['status'] == 'pending':
+                cordialy.cancel_followup(f['id'])
+
+# ── Cordialy → CRM (via webhook) ───────────────────────────────────────────
+
+def processar_webhook(evento: dict):
+    event_type = evento['event']
+    data = evento['data']
+
+    if event_type == 'lead.created':
+        crm.create_contact(
+            phone=data['customer_phone'],
+            name=data.get('name'),
+            source='whatsapp',
+            cordialy_lead_id=data['lead_id'],
+        )
+
+    elif event_type == 'lead.status_changed':
+        contato = crm.find_by_external(data['lead_id'])
+        if contato:
+            crm.update_stage(contato['id'], STAGE_MAP.get(data['new_status'], 'new'))
+
+    elif event_type == 'session.ended':
+        contato = crm.find_by_external(data['lead_id'])
+        if contato:
+            crm.add_note(contato['id'],
+                content=f"Sessão encerrada: {data['message_count']} msgs, status: {data['status']}"
+            )
+
+# ── Sincronização inicial ───────────────────────────────────────────────────
+
+from concurrent.futures import ThreadPoolExecutor
+
+def sync_inicial():
+    contatos = crm.list_all_contacts()
+    print(f'Sincronizando {len(contatos)} contatos...')
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        executor.map(sync_para_cordialy, contatos)
+
+    print('Concluído.')
+```
+</CodeGroup>

@@ -1,0 +1,195 @@
+---
+title: Serviço de Notificações
+description: Enviar mensagens automáticas baseadas em eventos do seu sistema
+---
+
+Centralize todos os disparos de mensagens em um único serviço reutilizável.
+
+<CodeGroup>
+```typescript Node.js / TypeScript
+// notification-service.ts
+import { CordialyClient } from './cordialy';
+
+const cordialy = new CordialyClient(process.env.CORDIALY_API_KEY!);
+
+export const Notificacoes = {
+
+  // ── E-commerce ─────────────────────────────────────────────────────────
+
+  async pedidoConfirmado(leadId: string, pedido: Pedido) {
+    await cordialy.leads.sendMessage(leadId,
+      `✅ Pedido *#${pedido.id}* confirmado!\n\n` +
+      `📦 Itens: ${pedido.itens.join(', ')}\n` +
+      `💰 Total: R$ ${pedido.total.toFixed(2)}\n` +
+      `🚚 Previsão de entrega: ${pedido.prazoEntrega}`
+    );
+  },
+
+  async pedidoEnviado(leadId: string, pedido: Pedido) {
+    await cordialy.leads.sendMessage(leadId,
+      `📦 Seu pedido *#${pedido.id}* saiu para entrega!\n\n` +
+      `Rastreio: ${pedido.codigoRastreio}\n` +
+      `Transportadora: ${pedido.transportadora}`
+    );
+  },
+
+  async pedidoEntregue(leadId: string, pedido: Pedido) {
+    await cordialy.leads.sendMessage(leadId,
+      `🎉 Pedido *#${pedido.id}* entregue!\n\n` +
+      `Obrigado pela compra! Sua avaliação é muito importante para nós. ⭐`
+    );
+    // Marca como convertido
+    await cordialy.leads.update(leadId, { status: 'converted' });
+  },
+
+  async carrinhoAbandonado(leadId: string, carrinho: Carrinho) {
+    await cordialy.leads.sendMessage(leadId,
+      `Oi! Vi que você deixou ${carrinho.itens.length} item(s) no carrinho 🛒\n\n` +
+      `${carrinho.itens.map(i => `• ${i.nome} — R$ ${i.preco.toFixed(2)}`).join('\n')}\n\n` +
+      `Posso te ajudar com alguma dúvida?`
+    );
+  },
+
+  // ── Financeiro ─────────────────────────────────────────────────────────
+
+  async faturaGerada(leadId: string, fatura: Fatura) {
+    await cordialy.leads.sendMessage(leadId,
+      `💳 Sua fatura de *R$ ${fatura.valor.toFixed(2)}* foi gerada.\n\n` +
+      `📅 Vencimento: ${formatarData(fatura.vencimento)}\n` +
+      `🔗 Pague via Pix: ${fatura.linkPagamento}`
+    );
+  },
+
+  async faturaVencendo(leadId: string, fatura: Fatura, diasRestantes: number) {
+    const urgencia = diasRestantes <= 1 ? '⚠️ ATENÇÃO:' : '📅';
+    await cordialy.leads.sendMessage(leadId,
+      `${urgencia} Sua fatura de *R$ ${fatura.valor.toFixed(2)}* vence ` +
+      `${diasRestantes === 0 ? 'hoje' : `em ${diasRestantes} dia(s)`}.\n\n` +
+      `Pague agora: ${fatura.linkPagamento}`
+    );
+  },
+
+  async pagamentoConfirmado(leadId: string, fatura: Fatura) {
+    await cordialy.leads.sendMessage(leadId,
+      `✅ Pagamento de *R$ ${fatura.valor.toFixed(2)}* confirmado!\n\n` +
+      `Obrigado. Seu acesso permanece ativo. 🙏`
+    );
+  },
+
+  // ── Agendamentos ───────────────────────────────────────────────────────
+
+  async agendamentoConfirmado(leadId: string, agendamento: Agendamento) {
+    await cordialy.leads.sendMessage(leadId,
+      `📅 *Agendamento confirmado!*\n\n` +
+      `🗓 Data: ${formatarData(agendamento.data)}\n` +
+      `🕐 Horário: ${agendamento.hora}\n` +
+      `📍 Local: ${agendamento.local}\n\n` +
+      `Para cancelar ou reagendar, responda esta mensagem.`
+    );
+  },
+
+  async lembreteAgendamento(leadId: string, agendamento: Agendamento) {
+    await cordialy.leads.sendMessage(leadId,
+      `⏰ *Lembrete:* você tem um agendamento amanhã!\n\n` +
+      `🗓 ${formatarData(agendamento.data)} às ${agendamento.hora}\n` +
+      `📍 ${agendamento.local}`
+    );
+  },
+};
+
+// Uso:
+// No webhook de pedido do e-commerce:
+await Notificacoes.pedidoConfirmado(lead.cordialy_id, pedido);
+
+// No cron de cobranças (rodar diariamente):
+for (const fatura of faturasVencendo3Dias) {
+  await Notificacoes.faturaVencendo(fatura.leadId, fatura, 3);
+}
+```
+
+```python Python
+# notification_service.py
+from cordialy import CordialyClient
+from datetime import datetime
+
+cordialy = CordialyClient(os.environ['CORDIALY_API_KEY'])
+
+def formatar_data(data: str) -> str:
+    return datetime.fromisoformat(data).strftime('%d/%m/%Y')
+
+class Notificacoes:
+
+    # ── E-commerce ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def pedido_confirmado(lead_id: str, pedido: dict):
+        itens = ', '.join(pedido['itens'])
+        cordialy.send_message(lead_id,
+            f"✅ Pedido *#{pedido['id']}* confirmado!\n\n"
+            f"📦 Itens: {itens}\n"
+            f"💰 Total: R$ {pedido['total']:.2f}\n"
+            f"🚚 Previsão de entrega: {pedido['prazo_entrega']}"
+        )
+
+    @staticmethod
+    def carrinho_abandonado(lead_id: str, carrinho: dict):
+        itens = '\n'.join(
+            f"• {i['nome']} — R$ {i['preco']:.2f}"
+            for i in carrinho['itens']
+        )
+        cordialy.send_message(lead_id,
+            f"Oi! Vi que você deixou {len(carrinho['itens'])} item(s) no carrinho 🛒\n\n"
+            f"{itens}\n\n"
+            f"Posso te ajudar com alguma dúvida?"
+        )
+
+    # ── Financeiro ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def fatura_vencendo(lead_id: str, fatura: dict, dias_restantes: int):
+        if dias_restantes == 0:
+            quando = 'hoje'
+        elif dias_restantes == 1:
+            quando = 'amanhã'
+        else:
+            quando = f'em {dias_restantes} dias'
+
+        urgencia = '⚠️ ATENÇÃO:' if dias_restantes <= 1 else '📅'
+
+        cordialy.send_message(lead_id,
+            f"{urgencia} Sua fatura de *R$ {fatura['valor']:.2f}* vence {quando}.\n\n"
+            f"Pague agora: {fatura['link_pagamento']}"
+        )
+
+    @staticmethod
+    def pagamento_confirmado(lead_id: str, fatura: dict):
+        cordialy.send_message(lead_id,
+            f"✅ Pagamento de *R$ {fatura['valor']:.2f}* confirmado!\n\n"
+            f"Obrigado. Seu acesso permanece ativo. 🙏"
+        )
+
+    # ── Agendamentos ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def agendamento_confirmado(lead_id: str, agendamento: dict):
+        cordialy.send_message(lead_id,
+            f"📅 *Agendamento confirmado!*\n\n"
+            f"🗓 Data: {formatar_data(agendamento['data'])}\n"
+            f"🕐 Horário: {agendamento['hora']}\n"
+            f"📍 Local: {agendamento['local']}\n\n"
+            f"Para cancelar ou reagendar, responda esta mensagem."
+        )
+
+    @staticmethod
+    def lembrete_agendamento(lead_id: str, agendamento: dict):
+        cordialy.send_message(lead_id,
+            f"⏰ *Lembrete:* você tem um agendamento amanhã!\n\n"
+            f"🗓 {formatar_data(agendamento['data'])} às {agendamento['hora']}\n"
+            f"📍 {agendamento['local']}"
+        )
+
+# Uso:
+Notificacoes.pedido_confirmado(lead['cordialy_id'], pedido)
+Notificacoes.fatura_vencendo(lead['cordialy_id'], fatura, dias_restantes=3)
+```
+</CodeGroup>
