@@ -178,18 +178,27 @@ X-Cordialy-Signature: sha256=abc123...
 
 **Sempre valide a assinatura antes de processar o evento.**
 
+<Warning>
+  A assinatura é calculada sobre o **body bruto** (bytes exatos recebidos). Se você parsear o body antes de validar (ex: `express.json()` no Node.js ou leitura automática no framework), a assinatura não vai bater.
+
+  - **Node.js (Express):** use `express.raw({ type: 'application/json' })` na rota do webhook
+  - **PHP:** use `$request->getContent()` (não `$request->input()` nem `$_POST`)
+  - **Python (FastAPI/Django):** use `await request.body()` (não `request.json()`)
+</Warning>
+
 <CodeGroup>
 ```typescript Node.js
 import crypto from 'crypto';
 
+// Na rota: app.post('/webhook', express.raw({ type: 'application/json' }), handler)
 function validarAssinatura(
-  payload: string,
+  rawBody: Buffer,
   signature: string,
   secret: string
 ): boolean {
   const esperado = 'sha256=' + crypto
     .createHmac('sha256', secret)
-    .update(payload, 'utf8')
+    .update(rawBody)
     .digest('hex');
 
   return crypto.timingSafeEqual(
@@ -203,18 +212,20 @@ function validarAssinatura(
 import hmac
 import hashlib
 
-def validar_assinatura(payload: bytes, signature: str, secret: str) -> bool:
+# Na rota: raw_body = await request.body()  (não request.json())
+def validar_assinatura(raw_body: bytes, signature: str, secret: str) -> bool:
     esperado = 'sha256=' + hmac.new(
         secret.encode('utf-8'),
-        payload,
+        raw_body,
         hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(signature, esperado)
 ```
 
 ```php PHP
-function validarAssinatura(string $payload, string $signature, string $secret): bool {
-    $esperado = 'sha256=' . hash_hmac('sha256', $payload, $secret);
+// Use $request->getContent(), não $request->input() nem $_POST
+function validarAssinatura(string $rawBody, string $signature, string $secret): bool {
+    $esperado = 'sha256=' . hash_hmac('sha256', $rawBody, $secret);
     return hash_equals($esperado, $signature);
 }
 ```
