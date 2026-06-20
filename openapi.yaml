@@ -39,7 +39,7 @@ components:
           description: Nome do lead
         customer_phone:
           type: string
-          description: Telefone no formato E.164 (ex: 5511999998888)
+          description: "Telefone no formato E.164 (ex: 5511999998888)"
         status:
           type: string
           enum: [pending, in_progress, converted, lost]
