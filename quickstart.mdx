@@ -1,55 +1,155 @@
 ---
 title: Quickstart
-description: Envie sua primeira mensagem em menos de 5 minutos
+description: Envie sua primeira mensagem via API em menos de 5 minutos
 ---
 
-## 1. Pegue sua API key
+## Pré-requisitos
 
-Gere uma key em **Plataforma → Integrações → API Keys**.
+- Uma conta ativa na Cordialy
+- Uma API key gerada em **Integrações → API Keys**
+- Um número de WhatsApp conectado na plataforma
 
-## 2. Crie ou encontre um lead
+## Passo 1 — Crie um lead
+
+Um lead é o contato que receberá a mensagem. Se ele já existe na plataforma, a API retorna o registro existente sem criar duplicata.
 
 <CodeGroup>
-```bash Criar novo lead
+```bash cURL
 curl -X POST https://api.cordialy.ai/integrations/v1/leads \
   -H "X-API-Key: SUA_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"customer_phone": "5511999998888", "name": "João Silva"}'
+  -d '{
+    "customer_phone": "5511999998888",
+    "name": "João Silva"
+  }'
 ```
 
-```bash Listar leads existentes
-curl https://api.cordialy.ai/integrations/v1/leads \
-  -H "X-API-Key: SUA_KEY"
+```typescript Node.js
+const lead = await fetch('https://api.cordialy.ai/integrations/v1/leads', {
+  method: 'POST',
+  headers: {
+    'X-API-Key': process.env.CORDIALY_API_KEY,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    customer_phone: '5511999998888',
+    name: 'João Silva',
+  }),
+}).then(r => r.json());
+
+console.log(lead.id); // salve este ID
+```
+
+```python Python
+import requests
+
+lead = requests.post(
+    'https://api.cordialy.ai/integrations/v1/leads',
+    headers={'X-API-Key': 'SUA_KEY'},
+    json={'customer_phone': '5511999998888', 'name': 'João Silva'}
+).json()
+
+print(lead['id'])  # salve este ID
 ```
 </CodeGroup>
 
-Guarde o `id` retornado.
+**Resposta:**
+```json
+{
+  "id": "a1b2c3d4-...",
+  "name": "João Silva",
+  "customer_phone": "5511999998888",
+  "status": "pending",
+  "created_at": "2026-06-19T10:00:00.000Z"
+}
+```
 
-## 3. Envie uma mensagem
+## Passo 2 — Envie uma mensagem
 
-```bash
+Use o `id` retornado no passo anterior:
+
+<CodeGroup>
+```bash cURL
 curl -X POST https://api.cordialy.ai/integrations/v1/leads/LEAD_ID/messages \
   -H "X-API-Key: SUA_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"message": "Olá! Temos uma oferta especial para você."}'
+  -d '{"message": "Olá João! Seu pedido #1234 foi aprovado e está sendo preparado."}'
 ```
 
-A mensagem é entregue via WhatsApp e aparece destacada na plataforma com a tag **Via API**.
+```typescript Node.js
+await fetch(`https://api.cordialy.ai/integrations/v1/leads/${lead.id}/messages`, {
+  method: 'POST',
+  headers: {
+    'X-API-Key': process.env.CORDIALY_API_KEY,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    message: 'Olá João! Seu pedido #1234 foi aprovado e está sendo preparado.',
+  }),
+});
+```
 
-## 4. Consulte o histórico
+```python Python
+requests.post(
+    f'https://api.cordialy.ai/integrations/v1/leads/{lead["id"]}/messages',
+    headers={'X-API-Key': 'SUA_KEY'},
+    json={'message': 'Olá João! Seu pedido #1234 foi aprovado e está sendo preparado.'}
+)
+```
+</CodeGroup>
+
+**Resposta:**
+```json
+{ "sent": true }
+```
+
+A mensagem é entregue ao lead via WhatsApp e aparece na plataforma destacada em **roxo** com a tag **Via API**.
+
+## Passo 3 — Acompanhe o histórico
 
 ```bash
 curl https://api.cordialy.ai/integrations/v1/leads/LEAD_ID/messages \
   -H "X-API-Key: SUA_KEY"
 ```
 
+Você verá a mensagem enviada com `"source": "api"` junto com as demais mensagens do lead.
+
+## Tratamento de erros
+
+Sempre verifique o status HTTP da resposta:
+
+```typescript
+const res = await fetch('...', { method: 'POST', ... });
+
+if (!res.ok) {
+  const error = await res.json();
+  console.error(`Erro ${res.status}:`, error.message);
+  // ex: "Lead não encontrado", "Mensagem não pode ser vazia"
+}
+```
+
+| Status | Significado |
+|---|---|
+| `200` / `201` | Sucesso |
+| `400` | Dados inválidos na requisição |
+| `401` | API key ausente ou inválida |
+| `404` | Recurso não encontrado |
+| `429` | Limite de requisições atingido |
+| `500` | Erro interno — tente novamente |
+
 ## Próximos passos
 
 <CardGroup cols={2}>
   <Card title="Automatizar follow-ups" icon="clock" href="/guides/followups">
-    Programe mensagens automáticas com base em inatividade ou eventos.
+    Programe mensagens automáticas de reativação.
   </Card>
-  <Card title="Receber eventos via Webhook" icon="webhook" href="/guides/webhooks">
-    Seja notificado quando leads responderem ou mudarem de status.
+  <Card title="Receber respostas via Webhook" icon="webhook" href="/guides/webhooks">
+    Seja notificado quando o lead responder.
+  </Card>
+  <Card title="Sincronizar leads do CRM" icon="users" href="/guides/leads">
+    Estratégias para manter leads sincronizados.
+  </Card>
+  <Card title="Entender os agentes de IA" icon="robot" href="/guides/agents">
+    Como a IA decide qual agente responde.
   </Card>
 </CardGroup>

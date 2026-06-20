@@ -1,6 +1,6 @@
 ---
 title: Gerenciar Leads
-description: Como criar, atualizar e consultar leads via API
+description: Como criar, atualizar, filtrar e sincronizar leads via API
 ---
 
 ## Ciclo de vida de um lead
@@ -12,16 +12,17 @@ pending → in_progress → converted
 
 | Status | Descrição |
 |---|---|
-| `pending` | Lead recém-criado, ainda não atendido |
-| `in_progress` | Em atendimento ativo |
+| `pending` | Lead criado, ainda não atendido |
+| `in_progress` | Em atendimento ativo pela IA ou por um consultor |
 | `converted` | Negócio fechado / objetivo atingido |
-| `lost` | Lead perdido |
+| `lost` | Lead perdido ou desqualificado |
 
-## Sincronizar leads do seu CRM
+Quando um lead envia a primeira mensagem via WhatsApp, ele é criado automaticamente com status `pending`. Você pode alterar o status via API para manter sincronismo com o seu sistema.
 
-Se você já tem leads em outro sistema, crie-os na Cordialy ao mesmo tempo:
+## Criar lead
 
-```bash
+<CodeGroup>
+```bash cURL
 curl -X POST https://api.cordialy.ai/integrations/v1/leads \
   -H "X-API-Key: SUA_KEY" \
   -H "Content-Type: application/json" \
@@ -32,24 +33,108 @@ curl -X POST https://api.cordialy.ai/integrations/v1/leads \
   }'
 ```
 
+```typescript Node.js
+const lead = await fetch('https://api.cordialy.ai/integrations/v1/leads', {
+  method: 'POST',
+  headers: { 'X-API-Key': process.env.CORDIALY_API_KEY, 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    customer_phone: '5511999998888',
+    name: 'Maria Souza',
+    status: 'in_progress',
+  }),
+}).then(r => r.json());
+```
+
+```python Python
+lead = requests.post(
+    'https://api.cordialy.ai/integrations/v1/leads',
+    headers={'X-API-Key': 'SUA_KEY'},
+    json={'customer_phone': '5511999998888', 'name': 'Maria Souza', 'status': 'in_progress'}
+).json()
+```
+</CodeGroup>
+
 <Info>
-  Se já existir um lead com o mesmo telefone, a API retorna o existente sem criar duplicata.
+  Se já existir um lead com o mesmo telefone, a API retorna o existente sem criar duplicata. Ideal para integrações de sincronização que podem rodar múltiplas vezes.
 </Info>
 
-## Filtrar leads por status
+## Listar e filtrar leads
 
 ```bash
-curl "https://api.cordialy.ai/integrations/v1/leads?status=pending&limit=100" \
+# Todos os leads pendentes
+curl "https://api.cordialy.ai/integrations/v1/leads?status=pending" \
+  -H "X-API-Key: SUA_KEY"
+
+# Leads atualizados nas últimas 24h
+curl "https://api.cordialy.ai/integrations/v1/leads?since=2026-06-19T00:00:00Z" \
+  -H "X-API-Key: SUA_KEY"
+
+# Paginação
+curl "https://api.cordialy.ai/integrations/v1/leads?page=2&limit=100" \
   -H "X-API-Key: SUA_KEY"
 ```
 
-## Atualizar status após conversão
+A resposta inclui `total`, `page` e `limit` para controle de paginação:
 
-Quando o lead converter no seu sistema, reflita isso na Cordialy:
+```json
+{
+  "data": [...],
+  "total": 1240,
+  "page": 2,
+  "limit": 100
+}
+```
 
-```bash
+## Atualizar status
+
+Quando um lead converte no seu sistema externo (ERP, e-commerce), atualize na Cordialy para manter consistência:
+
+<CodeGroup>
+```bash cURL
 curl -X PATCH https://api.cordialy.ai/integrations/v1/leads/LEAD_ID \
   -H "X-API-Key: SUA_KEY" \
   -H "Content-Type: application/json" \
   -d '{"status": "converted"}'
 ```
+
+```typescript Node.js
+await fetch(`https://api.cordialy.ai/integrations/v1/leads/${leadId}`, {
+  method: 'PATCH',
+  headers: { 'X-API-Key': process.env.CORDIALY_API_KEY, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ status: 'converted' }),
+});
+```
+</CodeGroup>
+
+## Padrões de integração
+
+<AccordionGroup>
+  <Accordion title="Sincronização com CRM (bidirecional)">
+    1. Quando um contato é criado no CRM → `POST /leads`
+    2. Quando o status muda no CRM → `PATCH /leads/:id`
+    3. Configure um webhook na Cordialy para receber `lead.status_changed` e atualizar o CRM no sentido inverso
+
+    Use o campo `since` para sincronizações incrementais — processe apenas o que mudou desde a última execução.
+  </Accordion>
+  <Accordion title="Importação de leads de e-commerce">
+    Ao finalizar uma compra, crie o lead e já envie uma mensagem de confirmação:
+
+    ```typescript
+    // Evento: pedido confirmado
+    const lead = await criarLead({ phone: order.phone, name: order.name });
+    await enviarMensagem(lead.id, `Pedido #${order.id} confirmado! Entrega em 3 dias.`);
+    ```
+  </Accordion>
+  <Accordion title="Importação em lote">
+    Para importar muitos leads de uma vez, envie as requisições em paralelo com controle de concorrência para respeitar o rate limit:
+
+    ```typescript
+    import pLimit from 'p-limit';
+    const limit = pLimit(10); // 10 requisições simultâneas
+
+    await Promise.all(
+      leads.map(lead => limit(() => criarLead(lead)))
+    );
+    ```
+  </Accordion>
+</AccordionGroup>

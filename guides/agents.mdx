@@ -1,11 +1,17 @@
 ---
 title: Agentes de IA
-description: Como consultar agentes e entender as condições de ativação
+description: Como funcionam os agentes, como são selecionados e como consultar via API
 ---
 
 ## O que são agentes
 
-Cada loja pode ter múltiplos agentes de IA com personalidades e regras diferentes. O sistema escolhe automaticamente qual agente atende cada lead com base nas **condições de ativação**.
+Cada loja pode ter múltiplos agentes de IA com personalidades, instruções e regras diferentes. O sistema escolhe automaticamente qual agente responde cada mensagem com base em **condições de ativação** configuradas na plataforma.
+
+Exemplos de uso com múltiplos agentes:
+- **Agente de triagem** → redireciona leads para o setor correto
+- **Agente de vendas** → foca em converter leads em clientes
+- **Agente de suporte** → resolve dúvidas de clientes existentes
+- **Agente de cobrança** → trata leads com pagamentos pendentes
 
 ## Consultar agentes ativos
 
@@ -14,54 +20,102 @@ curl https://api.cordialy.ai/integrations/v1/agents \
   -H "X-API-Key: SUA_KEY"
 ```
 
-## Estrutura de um agente
-
 ```json
-{
-  "id": "abc-123",
-  "name": "Agente de Vendas",
-  "model": "openai",
-  "priority": 1,
-  "is_active": true,
-  "is_default": false,
-  "condition_groups": [
-    {
-      "group_index": 0,
-      "logical_operator": "AND",
-      "conditions": [
-        {
-          "condition_type": "lead_status",
-          "operator": "=",
-          "value": "in_progress"
-        },
-        {
-          "condition_type": "interaction_count",
-          "operator": ">",
-          "value": "3"
-        }
-      ]
-    }
-  ]
-}
+[
+  {
+    "id": "agent-001",
+    "name": "Agente de Triagem",
+    "model": "auto",
+    "priority": 1,
+    "is_active": true,
+    "is_default": false,
+    "condition_groups": [
+      {
+        "group_index": 0,
+        "logical_operator": "AND",
+        "conditions": [
+          { "condition_type": "lead_status", "operator": "=", "value": "pending" },
+          { "condition_type": "interaction_count", "operator": "<", "value": "3" }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "agent-002",
+    "name": "Agente Padrão",
+    "model": "auto",
+    "priority": 99,
+    "is_active": true,
+    "is_default": true,
+    "condition_groups": []
+  }
+]
 ```
 
 ## Como a seleção funciona
 
-1. Agentes são testados em ordem de **prioridade** (menor número = maior prioridade)
-2. Dentro de cada `condition_group`, todas as condições devem ser verdadeiras (**AND**)
-3. Entre grupos, basta um ser verdadeiro (**OR**)
-4. Se nenhum agente bater, o agente com `is_default: true` é usado
+O sistema avalia os agentes em ordem de **prioridade** (menor número = maior prioridade):
 
-## Usando `last_agent_id` para encadeamento
+1. Para cada agente (exceto o padrão), avalia os `condition_groups`
+2. Dentro de um grupo: **todas as condições devem ser verdadeiras** (AND)
+3. Entre grupos: **basta um ser verdadeiro** (OR)
+4. Primeiro agente que passar é ativado
+5. Se nenhum passar, usa o agente com `is_default: true`
 
-Para encadear agentes em sequência, use a condição `last_agent_id`:
+```
+Mensagem recebida
+  → Agente prioridade 1: condições ✅ → ATIVADO
+  → (agentes seguintes não são avaliados)
 
+Mensagem recebida
+  → Agente prioridade 1: condições ❌
+  → Agente prioridade 2: condições ❌
+  → Agente padrão → ATIVADO
+```
+
+## Tipos de condição
+
+| Tipo | Exemplo de uso |
+|---|---|
+| `lead_status` | Ativa só para leads `in_progress` |
+| `interaction_count` | Ativa após X mensagens trocadas |
+| `message_contains` | Detecta palavras-chave ("preço", "cancelar") |
+| `media_type` | Ativa quando lead enviar áudio ou imagem |
+| `time_of_day` | Ativa em horário comercial ou fora dele |
+| `conversation_stage` | Ativa em fase específica do funil |
+| `last_agent_id` | Encadeia agentes em sequência |
+| `sentiment` | Detecta sentimento positivo/negativo/neutro |
+| `has_open_appointment` | Verifica se lead tem agendamento ativo |
+
+## Encadeamento de agentes
+
+Use `last_agent_id` para criar fluxos sequenciais:
+
+```
+Lead entra → Agente de Triagem (prioridade 1)
+  → qualifica o lead
+  → passa para Agente de Vendas (prioridade 2, condição: last_agent_id = triagem)
+    → fecha a venda
+    → passa para Agente de Onboarding (prioridade 3, condição: last_agent_id = vendas)
+```
+
+Configuração da condição de encadeamento:
 ```json
 {
   "condition_type": "last_agent_id",
   "operator": "=",
-  "value": "ID_DO_AGENTE_ANTERIOR"
+  "value": "agent-001"
 }
 ```
 
-Isso permite criar fluxos como: Triagem → Vendas → Fechamento.
+## Modelos disponíveis
+
+| Valor | Comportamento |
+|---|---|
+| `auto` | Usa o modelo padrão configurado na loja (recomendado) |
+| `gemini` | Google Gemini — boa performance em português |
+| `openai` | OpenAI GPT-4 — alto desempenho geral |
+
+<Info>
+  Via API você pode apenas **consultar** os agentes. Para criar ou editar agentes, acesse a plataforma em **Configurações → Agentes**.
+</Info>

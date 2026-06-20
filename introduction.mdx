@@ -1,28 +1,36 @@
 ---
 title: Introdução
-description: Integre seu sistema com a Cordialy via API REST
+description: Integre qualquer sistema com a Cordialy e automatize seu atendimento via WhatsApp com IA
 ---
 
-A **API pública da Cordialy** permite que você conecte qualquer sistema externo à plataforma de atendimento via WhatsApp com IA.
+A **API pública da Cordialy** permite conectar seu CRM, ERP, e-commerce ou qualquer sistema interno à plataforma de atendimento via WhatsApp com IA — sem precisar acessar a plataforma manualmente.
 
 ## O que você pode fazer
 
 <CardGroup cols={2}>
-  <Card title="Gerenciar Leads" icon="users" href="/api-reference/leads/list">
-    Crie, atualize e consulte leads diretamente do seu CRM ou sistema próprio.
+  <Card title="Gerenciar Leads" icon="users" href="/guides/leads">
+    Crie e atualize leads direto do seu sistema. Sincronize status, responsáveis e dados de contato sem abrir a plataforma.
   </Card>
-  <Card title="Enviar Mensagens" icon="message" href="/api-reference/leads/send-message">
-    Envie mensagens via WhatsApp para qualquer lead. Aparecem destacadas na plataforma.
+  <Card title="Enviar Mensagens" icon="message" href="/guides/messaging">
+    Dispare mensagens via WhatsApp para leads em momentos específicos — confirmações, notificações, cobranças, lembretes.
   </Card>
-  <Card title="Automatizar Follow-ups" icon="clock" href="/api-reference/followups/schedule">
-    Agende ou cancele follow-ups programaticamente com base em eventos do seu sistema.
+  <Card title="Automatizar Follow-ups" icon="clock" href="/guides/followups">
+    Agende mensagens automáticas de reativação com base em eventos do seu sistema, sem depender da IA da Cordialy.
   </Card>
-  <Card title="Consultar Relatórios" icon="chart-bar" href="/api-reference/reports/summary">
-    Acesse métricas de atendimento para integrar com seu BI ou dashboard.
+  <Card title="Consultar Agentes" icon="robot" href="/guides/agents">
+    Veja quais agentes de IA estão ativos e entenda as condições de ativação de cada um.
+  </Card>
+  <Card title="Receber Eventos" icon="webhook" href="/guides/webhooks">
+    Configure webhooks para ser notificado quando leads responderem, mudarem de status ou sessões forem abertas.
+  </Card>
+  <Card title="Acessar Relatórios" icon="chart-bar" href="/api-reference/reports/summary">
+    Puxe métricas de atendimento para integrar no seu BI, dashboard ou relatório gerencial.
   </Card>
 </CardGroup>
 
 ## Base URL
+
+Todos os endpoints usam a mesma base:
 
 ```
 https://api.cordialy.ai/integrations/v1
@@ -30,21 +38,44 @@ https://api.cordialy.ai/integrations/v1
 
 ## Autenticação
 
-Todas as requisições precisam de uma API key no header:
+Todas as requisições precisam do header `X-API-Key`:
 
 ```bash
-X-API-Key: sua_api_key_aqui
+curl https://api.cordialy.ai/integrations/v1/leads \
+  -H "X-API-Key: sua_chave_aqui"
 ```
 
-Acesse **Plataforma → Integrações → API Keys** para gerar sua chave.
+Gere sua chave em **Plataforma → Integrações → API Keys**.
 
-## Planos e limites
+## Disponibilidade por plano
 
 | Recurso | Growth | Enterprise | Enterprise Plus |
-|---|---|---|---|
-| Leads | ✅ | ✅ | ✅ |
-| Mensagens | ✅ | ✅ | ✅ |
+|---|:---:|:---:|:---:|
+| Leads (leitura e escrita) | ✅ | ✅ | ✅ |
+| Envio de mensagens | ✅ | ✅ | ✅ |
 | Follow-ups | ✅ | ✅ | ✅ |
-| Agentes | — | ✅ | ✅ |
+| Agentes de IA | — | ✅ | ✅ |
+| Base de conhecimento | — | ✅ | ✅ |
 | Relatórios | — | ✅ | ✅ |
 | Webhooks | — | ✅ | ✅ |
+
+## Limites de taxa
+
+| Plano | Requisições/min | Mensagens/dia |
+|---|---|---|
+| Growth | 60 | 500 |
+| Enterprise | 300 | 5.000 |
+| Enterprise Plus | 1.000 | ilimitado |
+
+Quando o limite é atingido, a API retorna `429 Too Many Requests`. O header `Retry-After` indica em quantos segundos você pode tentar novamente.
+
+## Próximos passos
+
+<CardGroup cols={2}>
+  <Card title="Autenticação" icon="key" href="/authentication">
+    Como gerar e usar sua API key com segurança.
+  </Card>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Envie sua primeira mensagem em menos de 5 minutos.
+  </Card>
+</CardGroup>

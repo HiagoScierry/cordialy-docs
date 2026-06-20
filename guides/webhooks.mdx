@@ -1,11 +1,11 @@
 ---
 title: Webhooks
-description: Receba notificações em tempo real de eventos na plataforma
+description: Receba notificações em tempo real quando eventos acontecem na Cordialy
 ---
 
 ## O que são webhooks
 
-Webhooks permitem que a Cordialy notifique seu sistema quando eventos acontecem — sem precisar fazer polling.
+Webhooks permitem que a Cordialy notifique seu sistema quando eventos acontecem — sem você precisar fazer polling à API. São ideais para sincronização em tempo real com CRMs, ERPs e automações.
 
 Configure em **Plataforma → Integrações → Webhooks**.
 
@@ -13,50 +13,167 @@ Configure em **Plataforma → Integrações → Webhooks**.
 
 | Evento | Quando dispara |
 |---|---|
-| `lead.created` | Novo lead criado |
-| `lead.status_changed` | Status do lead alterado |
-| `message.received` | Lead enviou mensagem |
-| `message.sent` | IA ou consultor enviou mensagem |
-| `session.started` | Nova sessão de atendimento iniciada |
-| `session.ended` | Sessão encerrada |
-| `followup.sent` | Follow-up disparado |
+| `lead.created` | Novo lead criado (via WhatsApp ou API) |
+| `lead.status_changed` | Status do lead foi alterado |
+| `message.received` | Lead enviou uma mensagem via WhatsApp |
+| `message.sent` | IA ou consultor enviou uma mensagem |
+| `session.started` | Nova sessão de atendimento aberta |
+| `session.ended` | Sessão de atendimento encerrada |
+| `followup.sent` | Follow-up automático foi disparado |
 
 ## Formato do payload
+
+Todos os eventos seguem a mesma estrutura:
 
 ```json
 {
   "event": "lead.status_changed",
   "timestamp": "2026-06-20T14:30:00.000Z",
-  "store_id": "...",
+  "store_id": "store-uuid",
   "data": {
-    "lead_id": "...",
+    "lead_id": "lead-uuid",
     "previous_status": "pending",
     "new_status": "converted"
   }
 }
 ```
 
-## Segurança
+### Payload por evento
 
-Cada requisição inclui o header `X-Cordialy-Signature` com um HMAC-SHA256 do payload assinado com o seu **Webhook Secret**.
+<AccordionGroup>
+  <Accordion title="lead.created">
+    ```json
+    {
+      "event": "lead.created",
+      "data": {
+        "lead_id": "...",
+        "name": "João Silva",
+        "customer_phone": "5511999998888",
+        "status": "pending"
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="message.received">
+    ```json
+    {
+      "event": "message.received",
+      "data": {
+        "lead_id": "...",
+        "message_id": "...",
+        "content": "Olá, quero saber o preço",
+        "media_type": null
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="session.ended">
+    ```json
+    {
+      "event": "session.ended",
+      "data": {
+        "lead_id": "...",
+        "session_id": "...",
+        "status": "converted",
+        "started_at": "2026-06-20T09:00:00Z",
+        "ended_at": "2026-06-20T14:30:00Z"
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
 
-Valide sempre a assinatura antes de processar:
+## Validar a assinatura
 
-```typescript
+Cada requisição inclui o header `X-Cordialy-Signature` com um HMAC-SHA256 do payload assinado com seu **Webhook Secret**. Valide sempre antes de processar:
+
+<CodeGroup>
+```typescript Node.js
 import crypto from 'crypto';
 
-function verifyWebhook(payload: string, signature: string, secret: string): boolean {
-  const expected = crypto
+function verificarWebhook(payload: string, signature: string, secret: string): boolean {
+  const esperado = crypto
     .createHmac('sha256', secret)
     .update(payload)
     .digest('hex');
+
   return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expected)
+    Buffer.from(signature, 'hex'),
+    Buffer.from(esperado, 'hex')
   );
 }
+
+// Em Express:
+app.post('/webhook/cordialy', express.raw({ type: 'application/json' }), (req, res) => {
+  const signature = req.headers['x-cordialy-signature'] as string;
+  const valido = verificarWebhook(req.body.toString(), signature, process.env.WEBHOOK_SECRET);
+
+  if (!valido) return res.status(401).json({ error: 'Assinatura inválida' });
+
+  const evento = JSON.parse(req.body.toString());
+  // processa evento...
+
+  res.status(200).json({ received: true });
+});
 ```
+
+```python Python
+import hmac, hashlib
+
+def verificar_webhook(payload: bytes, signature: str, secret: str) -> bool:
+    esperado = hmac.new(
+        secret.encode(), payload, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(signature, esperado)
+
+# Em Flask:
+@app.route('/webhook/cordialy', methods=['POST'])
+def webhook():
+    signature = request.headers.get('X-Cordialy-Signature', '')
+    if not verificar_webhook(request.data, signature, os.environ['WEBHOOK_SECRET']):
+        return {'error': 'Assinatura inválida'}, 401
+
+    evento = request.json
+    # processa evento...
+    return {'received': True}
+```
+</CodeGroup>
+
+<Warning>
+  Sempre valide a assinatura antes de processar o evento. Sem validação, qualquer pessoa pode enviar dados falsos para seu endpoint.
+</Warning>
 
 ## Retry automático
 
-Se seu endpoint retornar um status diferente de `2xx`, a Cordialy tentará reenviar o evento com backoff exponencial por até 24 horas.
+Se seu endpoint retornar status diferente de `2xx`, a Cordialy tentará reenviar com backoff exponencial:
+
+| Tentativa | Delay |
+|---|---|
+| 1ª | Imediato |
+| 2ª | 1 minuto |
+| 3ª | 5 minutos |
+| 4ª | 30 minutos |
+| 5ª | 2 horas |
+
+Após 5 tentativas sem sucesso, o evento é descartado.
+
+## Boas práticas
+
+<AccordionGroup>
+  <Accordion title="Responda rápido, processe depois">
+    Retorne `200 OK` imediatamente e processe o evento em background. Endpoints lentos causam timeouts e retries desnecessários.
+
+    ```typescript
+    app.post('/webhook', async (req, res) => {
+      res.status(200).json({ received: true }); // responde primeiro
+      await processarEvento(req.body);           // processa depois
+    });
+    ```
+  </Accordion>
+  <Accordion title="Torne o handler idempotente">
+    Por causa dos retries, o mesmo evento pode chegar mais de uma vez. Use o `message_id` ou `lead_id` + `timestamp` como chave de deduplicação.
+  </Accordion>
+  <Accordion title="Use HTTPS com certificado válido">
+    O endpoint precisa ser HTTPS com certificado válido. HTTP ou certificados autoassinados são rejeitados.
+  </Accordion>
+</AccordionGroup>

@@ -1,46 +1,141 @@
 ---
 title: Enviar Mensagens
-description: Como enviar mensagens via API e como elas aparecem na plataforma
+description: Como enviar mensagens via API, consultar histórico e entender como aparecem na plataforma
 ---
 
 ## Enviar mensagem de texto
 
-```bash
+<CodeGroup>
+```bash cURL
 curl -X POST https://api.cordialy.ai/integrations/v1/leads/LEAD_ID/messages \
   -H "X-API-Key: SUA_KEY" \
   -H "Content-Type: application/json" \
   -d '{"message": "Olá! Sua solicitação foi processada com sucesso."}'
 ```
 
-A mensagem é entregue ao lead via WhatsApp e salva no histórico com `source: "api"`.
+```typescript Node.js
+await fetch(`https://api.cordialy.ai/integrations/v1/leads/${leadId}/messages`, {
+  method: 'POST',
+  headers: { 'X-API-Key': process.env.CORDIALY_API_KEY, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ message: 'Olá! Sua solicitação foi processada com sucesso.' }),
+});
+```
+
+```python Python
+requests.post(
+    f'https://api.cordialy.ai/integrations/v1/leads/{lead_id}/messages',
+    headers={'X-API-Key': 'SUA_KEY'},
+    json={'message': 'Olá! Sua solicitação foi processada com sucesso.'}
+)
+```
+</CodeGroup>
 
 ## Como aparece na plataforma
 
-Mensagens enviadas via API são destacadas em **roxo** na conversa com a tag **Via API**, diferenciando de mensagens da IA (azul) e do consultor (verde).
+Mensagens enviadas via API são identificadas visualmente para facilitar o acompanhamento pela equipe:
 
-## Consultar histórico de mensagens
+- **Cor roxa** na bolha da conversa
+- **Tag "Via API"** com ícone de raio
+- Campo `source: "api"` no histórico
+
+Isso diferencia das mensagens da IA (azul) e dos consultores humanos (verde), dando visibilidade completa de todas as origens de comunicação.
+
+## Consultar histórico
 
 ```bash
-curl "https://api.cordialy.ai/integrations/v1/leads/LEAD_ID/messages" \
+# Histórico completo
+curl https://api.cordialy.ai/integrations/v1/leads/LEAD_ID/messages \
   -H "X-API-Key: SUA_KEY"
-```
 
-Para buscar apenas mensagens recentes:
-
-```bash
+# Apenas mensagens recentes
 curl "https://api.cordialy.ai/integrations/v1/leads/LEAD_ID/messages?from=2026-06-01T00:00:00Z" \
   -H "X-API-Key: SUA_KEY"
 ```
 
+**Exemplo de resposta:**
+```json
+[
+  {
+    "id": "msg-001",
+    "role": "user",
+    "content": "Oi, quero saber sobre o produto X",
+    "source": "whatsapp",
+    "created_at": "2026-06-19T09:00:00Z"
+  },
+  {
+    "id": "msg-002",
+    "role": "assistant",
+    "content": "Olá! O produto X está disponível em 3 cores...",
+    "source": "whatsapp",
+    "created_at": "2026-06-19T09:00:05Z"
+  },
+  {
+    "id": "msg-003",
+    "role": "agent",
+    "content": "Seu pedido foi confirmado! 🎉",
+    "source": "api",
+    "created_at": "2026-06-19T10:30:00Z"
+  }
+]
+```
+
 ## Campos de resposta
 
-| Campo | Descrição |
-|---|---|
-| `role` | `user` (lead), `assistant` (IA), `agent` (consultor) |
-| `source` | `whatsapp`, `call`, `api` |
-| `media_type` | `image`, `video`, `audio`, `document` ou `null` |
-| `session_id` | ID da sessão de atendimento associada |
+| Campo | Valores | Descrição |
+|---|---|---|
+| `role` | `user`, `assistant`, `agent` | Quem enviou: lead, IA ou consultor/API |
+| `source` | `whatsapp`, `call`, `api` | Canal de origem da mensagem |
+| `media_type` | `image`, `video`, `audio`, `document`, `null` | Tipo de mídia anexada |
+| `media_url` | URL ou `null` | Link para o arquivo de mídia |
+| `session_id` | UUID ou `null` | Sessão de atendimento vinculada |
+
+## Casos de uso comuns
+
+<AccordionGroup>
+  <Accordion title="Notificação de pedido">
+    ```typescript
+    // Dispara quando pedido muda de status no ERP
+    async function notificarStatusPedido(pedido) {
+      const mensagens = {
+        aprovado: `✅ Pedido #${pedido.id} aprovado! Previsão de entrega: ${pedido.prazo}`,
+        enviado: `📦 Pedido #${pedido.id} saiu para entrega. Rastreio: ${pedido.rastreio}`,
+        entregue: `🎉 Pedido #${pedido.id} entregue! Obrigado pela compra.`,
+      };
+
+      await enviarMensagem(pedido.leadId, mensagens[pedido.status]);
+    }
+    ```
+  </Accordion>
+  <Accordion title="Cobrança automatizada">
+    ```typescript
+    // Aviso de vencimento (D-3, D-1, D+1)
+    async function avisarVencimento(fatura) {
+      const diasRestantes = Math.ceil(
+        (new Date(fatura.vencimento) - new Date()) / (1000 * 60 * 60 * 24)
+      );
+
+      if (diasRestantes === 3) {
+        await enviarMensagem(fatura.leadId,
+          `Sua fatura de R$ ${fatura.valor} vence em 3 dias. Pague via Pix: ${fatura.linkPix}`
+        );
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="Confirmação de agendamento">
+    ```typescript
+    // Confirmação + lembrete 24h antes
+    async function confirmarAgendamento(agendamento) {
+      await enviarMensagem(agendamento.leadId,
+        `📅 Consulta confirmada para ${agendamento.data} às ${agendamento.hora}.\n` +
+        `Endereço: ${agendamento.local}\n` +
+        `Para cancelar ou reagendar, responda esta mensagem.`
+      );
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
 
 <Warning>
-  O envio de mídia (imagens, documentos) via API ainda não é suportado. Use a plataforma para enviar arquivos.
+  O envio de mídia (imagens, documentos, áudios) via API ainda não é suportado. Use a plataforma para enviar arquivos manualmente.
 </Warning>

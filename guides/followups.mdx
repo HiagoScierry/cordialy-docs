@@ -1,64 +1,169 @@
 ---
 title: Follow-ups
-description: Como agendar e cancelar follow-ups automaticamente via API
+description: Como agendar, monitorar e cancelar follow-ups automaticamente via API
 ---
 
 ## Como funciona
 
-Follow-ups são mensagens automáticas disparadas pela IA com base em regras configuradas na plataforma. Via API você pode:
+Follow-ups são mensagens automáticas disparadas com base em regras de tempo e comportamento do lead. Eles são configurados na plataforma pela equipe e executados automaticamente pelo sistema.
 
-- **Listar** regras ativas e follow-ups agendados
-- **Agendar** um follow-up manualmente para um lead específico
-- **Cancelar** um follow-up pendente
-
-## 1. Veja as configs disponíveis
-
-```bash
-curl https://api.cordialy.ai/integrations/v1/followups/configs \
-  -H "X-API-Key: SUA_KEY"
-```
-
-Guarde o `id` da config que deseja usar.
-
-## 2. Agende um follow-up
-
-```bash
-curl -X POST https://api.cordialy.ai/integrations/v1/followups/scheduled \
-  -H "X-API-Key: SUA_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "lead_id": "LEAD_ID",
-    "config_id": "CONFIG_ID",
-    "scheduled_at": "2026-06-25T10:00:00.000Z"
-  }'
-```
-
-Se `scheduled_at` for omitido, usa `agora + trigger_delay_minutes` da config.
-
-## 3. Cancele se necessário
-
-Por exemplo, quando o lead já converteu no seu sistema:
-
-```bash
-curl -X DELETE https://api.cordialy.ai/integrations/v1/followups/scheduled/FOLLOWUP_ID \
-  -H "X-API-Key: SUA_KEY"
-```
-
-<Info>
-  Só é possível cancelar follow-ups com status `pending`. Se já foi enviado, não há reversão.
-</Info>
+Via API você pode:
+- **Consultar** as regras configuradas e follow-ups pendentes
+- **Agendar** um follow-up manualmente fora do fluxo automático
+- **Cancelar** um follow-up antes de ele ser enviado
 
 ## Tipos de trigger
 
 | Trigger | Quando dispara |
 |---|---|
 | `silence` | Lead ficou X minutos sem responder |
-| `post_handover` | Após transferência para consultor |
-| `post_contact` | Após primeiro contato |
+| `post_handover` | X minutos após transferência para consultor |
+| `post_contact` | X minutos após o primeiro contato |
 
 ## Tipos de conteúdo
 
 | Tipo | Comportamento |
 |---|---|
-| `fixed_message` | Envia a mensagem exata configurada no campo `message` |
-| `ai_objective` | A IA gera a mensagem com base no `objective` |
+| `fixed_message` | Envia exatamente o texto configurado no campo `message` |
+| `ai_objective` | A IA gera uma mensagem contextualizada com base no `objective` |
+
+## Passo 1 — Liste as configurações
+
+```bash
+curl https://api.cordialy.ai/integrations/v1/followups/configs \
+  -H "X-API-Key: SUA_KEY"
+```
+
+```json
+[
+  {
+    "id": "cfg-001",
+    "name": "Reativação após silêncio",
+    "is_active": true,
+    "trigger_type": "silence",
+    "trigger_delay_minutes": 60,
+    "followup_type": "ai_objective",
+    "objective": "Reativar o lead e entender por que parou de responder",
+    "max_attempts": 3,
+    "min_interval_minutes": 1440
+  }
+]
+```
+
+## Passo 2 — Agende um follow-up
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://api.cordialy.ai/integrations/v1/followups/scheduled \
+  -H "X-API-Key: SUA_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "lead_id": "LEAD_ID",
+    "config_id": "cfg-001",
+    "scheduled_at": "2026-06-25T10:00:00.000Z"
+  }'
+```
+
+```typescript Node.js
+const followup = await fetch('https://api.cordialy.ai/integrations/v1/followups/scheduled', {
+  method: 'POST',
+  headers: { 'X-API-Key': process.env.CORDIALY_API_KEY, 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    lead_id: leadId,
+    config_id: 'cfg-001',
+    scheduled_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // amanhã
+  }),
+}).then(r => r.json());
+```
+</CodeGroup>
+
+Se `scheduled_at` for omitido, o sistema usa `agora + trigger_delay_minutes` da configuração.
+
+## Passo 3 — Cancele se necessário
+
+Cancele quando o lead já respondeu ou converteu antes do disparo:
+
+<CodeGroup>
+```bash cURL
+curl -X DELETE https://api.cordialy.ai/integrations/v1/followups/scheduled/FOLLOWUP_ID \
+  -H "X-API-Key: SUA_KEY"
+```
+
+```typescript Node.js
+await fetch(`https://api.cordialy.ai/integrations/v1/followups/scheduled/${followupId}`, {
+  method: 'DELETE',
+  headers: { 'X-API-Key': process.env.CORDIALY_API_KEY },
+});
+```
+</CodeGroup>
+
+<Info>
+  Só é possível cancelar follow-ups com status `pending`. Se o follow-up já foi enviado, não há reversão.
+</Info>
+
+## Monitorar follow-ups pendentes
+
+```bash
+# Todos os pendentes da loja
+curl https://api.cordialy.ai/integrations/v1/followups/scheduled \
+  -H "X-API-Key: SUA_KEY"
+
+# Pendentes de um lead específico
+curl "https://api.cordialy.ai/integrations/v1/followups/scheduled?lead_id=LEAD_ID" \
+  -H "X-API-Key: SUA_KEY"
+```
+
+## Padrões de uso
+
+<AccordionGroup>
+  <Accordion title="Cancelar follow-up quando lead converte no CRM">
+    Quando um negócio é fechado no seu CRM, cancele os follow-ups pendentes para não incomodar o cliente:
+
+    ```typescript
+    async function onNegocioFechado(deal) {
+      // Atualiza status na Cordialy
+      await atualizarLead(deal.leadId, { status: 'converted' });
+
+      // Cancela follow-ups pendentes
+      const followups = await listarFollowups(deal.leadId);
+      const pendentes = followups.filter(f => f.status === 'pending');
+
+      await Promise.all(pendentes.map(f => cancelarFollowup(f.id)));
+    }
+    ```
+  </Accordion>
+  <Accordion title="Agendar follow-up pós-reunião">
+    Após uma reunião no calendário, agende automaticamente um follow-up para o dia seguinte:
+
+    ```typescript
+    // Webhook do Google Calendar / Nylas
+    async function onReuniaoFinalizada(evento) {
+      const amanha = new Date();
+      amanha.setDate(amanha.getDate() + 1);
+      amanha.setHours(10, 0, 0, 0);
+
+      await agendarFollowup({
+        lead_id: evento.leadId,
+        config_id: CONFIG_POS_REUNIAO,
+        scheduled_at: amanha.toISOString(),
+      });
+    }
+    ```
+  </Accordion>
+  <Accordion title="Follow-up de carrinho abandonado">
+    Quando um cliente abandona o carrinho no e-commerce, agende um follow-up com desconto:
+
+    ```typescript
+    async function onCarrinhoAbandonado(carrinho) {
+      // Espera 2 horas antes de disparar
+      const scheduledAt = new Date(Date.now() + 2 * 60 * 60 * 1000);
+
+      await agendarFollowup({
+        lead_id: carrinho.leadId,
+        config_id: CONFIG_CARRINHO_ABANDONADO,
+        scheduled_at: scheduledAt.toISOString(),
+      });
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
