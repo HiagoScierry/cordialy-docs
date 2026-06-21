@@ -11,21 +11,19 @@ Todo evento segue a mesma estrutura de envelope:
 
 ```json
 {
-  "id": "evt_01HX...",
-  "event": "lead.status_changed",
-  "timestamp": "2026-06-20T14:30:00.000Z",
+  "event_type": "lead.status_changed",
   "store_id": "uuid-da-loja",
-  "data": { ... }
+  "occurred_at": "2026-06-20T14:30:00.000Z",
+  "payload": { ... }
 }
 ```
 
 | Campo | Tipo | Descrição |
 |---|---|---|
-| `id` | string | ID único do evento — use para deduplicação |
-| `event` | string | Nome do evento (ver tabela abaixo) |
-| `timestamp` | ISO 8601 | Momento em que o evento ocorreu |
+| `event_type` | string | Nome do evento (ver tabela abaixo) |
 | `store_id` | uuid | ID da loja que gerou o evento |
-| `data` | object | Payload específico do evento |
+| `occurred_at` | ISO 8601 | Momento em que o evento ocorreu |
+| `payload` | object | Dados específicos do evento |
 
 ## Eventos disponíveis
 
@@ -175,6 +173,14 @@ Cada requisição inclui o header `X-Cordialy-Signature` com HMAC-SHA256 do payl
 ```
 X-Cordialy-Signature: sha256=abc123...
 ```
+
+### Onde encontrar o Webhook Secret
+
+O secret é gerado automaticamente quando você cadastra um webhook em **Integrações → Webhooks**. Ele é exibido **uma única vez** logo após a criação — copie e guarde em um local seguro.
+
+<Warning>
+  Se você perder o secret, não é possível recuperá-lo. Delete o webhook e crie um novo para gerar um secret diferente.
+</Warning>
 
 **Sempre valide a assinatura antes de processar o evento.**
 
